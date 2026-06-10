@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "world-cup-eb2e7"
+  },
+  "targets": {
+    "world-cup-eb2e7": {
+      "hosting": {
+        "admin": [
+          "world-cup-admin"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
