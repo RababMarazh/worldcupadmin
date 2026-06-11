@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:flutter/services.dart';
 
 import '../controllers/match_controller.dart';
 import '../controllers/user_controller.dart';
 import '../models/match_model.dart';
 import 'expectations_page.dart';
 import 'leaderboard_page.dart';
+import 'users_page.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -25,6 +25,11 @@ class HomePage extends StatelessWidget {
             icon: const Icon(Icons.leaderboard),
             tooltip: 'الترتيب',
             onPressed: () => Get.to(() => const LeaderboardPage()),
+          ),
+          IconButton(
+            icon: const Icon(Icons.people),
+            tooltip: 'إدارة المستخدمين',
+            onPressed: () => Get.to(() => const UsersPage()),
           ),
           Obx(() {
             final user = userController.currentUser.value;
@@ -160,70 +165,6 @@ class HomePage extends StatelessWidget {
             }),
           ),
         ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          // Show dialog to create user with generated code
-          final nameController = TextEditingController();
-          await showDialog<void>(
-            context: context,
-            builder: (context) {
-              return AlertDialog(
-                title: const Text('Add User'),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: nameController,
-                      decoration: const InputDecoration(labelText: 'Name'),
-                    ),
-                  ],
-                ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                  ElevatedButton(
-                    onPressed: () async {
-                      final name = nameController.text.trim();
-                      if (name.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Please enter a name')),
-                        );
-                        return;
-                      }
-
-                      final code = await userController.createUser(name);
-                      if (code != null) {
-                        await Clipboard.setData(ClipboardData(text: code));
-                        Navigator.of(context).pop();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text('User created. Code copied: $code'),
-                          ),
-                        );
-                      } else {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Failed to create user'),
-                          ),
-                        );
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                    ),
-                    child: const Text('Generate & Copy'),
-                  ),
-                ],
-              );
-            },
-          );
-        },
-        label: const Text('اضافة'),
-        icon: const Icon(Icons.lightbulb),
-        backgroundColor: Colors.green,
       ),
     );
   }
