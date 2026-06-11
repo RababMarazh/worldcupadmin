@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -377,6 +378,28 @@ class _MatchCardState extends State<_MatchCard> {
               ),
             ],
           ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () => showModalBottomSheet(
+                context: context,
+                isScrollControlled: true,
+                shape: const RoundedRectangleBorder(
+                  borderRadius:
+                      BorderRadius.vertical(top: Radius.circular(24)),
+                ),
+                builder: (_) => _StatsSheet(match: widget.match),
+              ),
+              icon: const Icon(Icons.bar_chart, size: 18),
+              label: const Text('إحصائيات التوقعات'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: Colors.deepOrange,
+                side: const BorderSide(color: Colors.deepOrange),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
           const SizedBox(height: 16),
 
           // ── match meta ───────────────────────────────────────────────────
@@ -500,4 +523,349 @@ class _TeamBadge extends StatelessWidget {
       ],
     );
   }
+}
+
+// ── Stats bottom sheet ─────────────────────────────────────────────────────
+
+class _StatsSheet extends StatefulWidget {
+  const _StatsSheet({required this.match});
+  final MatchModel match;
+
+  @override
+  State<_StatsSheet> createState() => _StatsSheetState();
+}
+
+class _StatsSheetState extends State<_StatsSheet> {
+  bool _loading = true;
+  _MatchStats? _stats;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final snap =
+        await FirebaseFirestore.instance.collection('users').get();
+
+    int total = 0, homeWin = 0, draw = 0, awayWin = 0;
+
+    for (final doc in snap.docs) {
+      final predictions =
+          doc.data()['predictions'] as Map<String, dynamic>?;
+      final pred =
+          predictions?[widget.match.id] as Map<String, dynamic>?;
+      if (pred == null) continue;
+
+      final ph = int.tryParse(pred['home_score']?.toString() ?? '');
+      final pa = int.tryParse(pred['away_score']?.toString() ?? '');
+      if (ph == null || pa == null) continue;
+
+      total++;
+      if (ph > pa) {
+        homeWin++;
+      } else if (ph == pa) {
+        draw++;
+      } else {
+        awayWin++;
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _stats = _MatchStats(
+          total: total,
+          homeWin: homeWin,
+          draw: draw,
+          awayWin: awayWin,
+        );
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final match = widget.match;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // handle bar
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // title
+          Text(
+            '${match.homeTeam}  vs  ${match.awayTeam}',
+            style: const TextStyle(
+                fontSize: 16, fontWeight: FontWeight.bold),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'توقعات المستخدمين',
+            style: TextStyle(fontSize: 13, color: Colors.black54),
+          ),
+          const SizedBox(height: 20),
+
+          if (_loading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 32),
+              child: CircularProgressIndicator(),
+            )
+          else if (_stats == null || _stats!.total == 0)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 32),
+              child: Text(
+                'لا توجد توقعات لهذه المباراة بعد',
+                style: TextStyle(color: Colors.black54, fontSize: 15),
+              ),
+            )
+          else
+            _StatsBody(match: match, stats: _stats!),
+        ],
+      ),
+    );
+  }
+}
+
+class _StatsBody extends StatelessWidget {
+  const _StatsBody({required this.match, required this.stats});
+  final MatchModel match;
+  final _MatchStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    final homePct = stats.homePct;
+    final drawPct = stats.drawPct;
+    final awayPct = stats.awayPct;
+
+    return Column(
+      children: [
+        // total count
+        Text(
+          'إجمالي المتوقعين: ${stats.total} مستخدم',
+          style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Colors.black54),
+        ),
+        const SizedBox(height: 20),
+
+        // ── three columns: home | draw | away ────────────────────────
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // home
+            Expanded(
+              child: Column(
+                children: [
+                  SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: match.fixedHomeLogoUrl.isNotEmpty
+                        ? Image.network(match.fixedHomeLogoUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, e, st) =>
+                                const Icon(Icons.flag, size: 32))
+                        : const Icon(Icons.flag, size: 32),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    match.homeTeam,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${homePct.toStringAsFixed(1)}%',
+                    style: const TextStyle(
+                        fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    '${stats.homeWin} صوت',
+                    style: const TextStyle(
+                        fontSize: 12, color: Colors.black54),
+                  ),
+                ],
+              ),
+            ),
+
+            // draw
+            Expanded(
+              child: Column(
+                children: [
+                  const SizedBox(height: 8),
+                  const Text(
+                    'تعادل',
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.black54),
+                  ),
+                  const SizedBox(height: 30),
+                  Text(
+                    '${drawPct.toStringAsFixed(1)}%',
+                    style: const TextStyle(
+                        fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    '${stats.draw} صوت',
+                    style: const TextStyle(
+                        fontSize: 12, color: Colors.black54),
+                  ),
+                ],
+              ),
+            ),
+
+            // away
+            Expanded(
+              child: Column(
+                children: [
+                  SizedBox(
+                    width: 48,
+                    height: 48,
+                    child: match.fixedAwayLogoUrl.isNotEmpty
+                        ? Image.network(match.fixedAwayLogoUrl,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, e, st) =>
+                                const Icon(Icons.flag, size: 32))
+                        : const Icon(Icons.flag, size: 32),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    match.awayTeam,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    '${awayPct.toStringAsFixed(1)}%',
+                    style: const TextStyle(
+                        fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  Text(
+                    '${stats.awayWin} صوت',
+                    style: const TextStyle(
+                        fontSize: 12, color: Colors.black54),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 20),
+
+        // ── probability bar ──────────────────────────────────────────
+        ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: SizedBox(
+            height: 10,
+            child: Row(
+              children: [
+                if (stats.homeWin > 0)
+                  Flexible(
+                    flex: stats.homeWin,
+                    child: Container(color: const Color(0xFF1a1a1a)),
+                  ),
+                if (stats.draw > 0)
+                  Flexible(
+                    flex: stats.draw,
+                    child: Container(color: Colors.grey.shade400),
+                  ),
+                if (stats.awayWin > 0)
+                  Flexible(
+                    flex: stats.awayWin,
+                    child: Container(color: Colors.blue),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+
+        // labels under bar
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                match.homeTeam,
+                style: const TextStyle(fontSize: 11, color: Colors.black45),
+              ),
+            ),
+            const Text(
+              'تعادل',
+              style: TextStyle(fontSize: 11, color: Colors.black45),
+            ),
+            Expanded(
+              child: Text(
+                match.awayTeam,
+                textAlign: TextAlign.end,
+                style: const TextStyle(fontSize: 11, color: Colors.black45),
+              ),
+            ),
+          ],
+        ),
+
+        // ── actual result if available ────────────────────────────────
+        if (match.homeScore.isNotEmpty && match.awayScore.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          const Divider(),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.sports_soccer,
+                  size: 16, color: Colors.green),
+              const SizedBox(width: 6),
+              Text(
+                'النتيجة الفعلية: ${match.homeScore} - ${match.awayScore}',
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green.shade700),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _MatchStats {
+  const _MatchStats({
+    required this.total,
+    required this.homeWin,
+    required this.draw,
+    required this.awayWin,
+  });
+
+  final int total;
+  final int homeWin;
+  final int draw;
+  final int awayWin;
+
+  double get homePct => total > 0 ? homeWin / total * 100 : 0;
+  double get drawPct => total > 0 ? draw / total * 100 : 0;
+  double get awayPct => total > 0 ? awayWin / total * 100 : 0;
 }
