@@ -88,12 +88,6 @@ class MatchController extends GetxController {
       final usersSnapshot = await _firestore.collection('users').get();
       final batch = _firestore.batch();
 
-      // Build a quick lookup: matchId → MatchModel (only matches with results)
-      final matchesWithResults = {
-        for (final m in matches)
-          if (m.homeScore.isNotEmpty && m.awayScore.isNotEmpty) m.id: m,
-      };
-
       var updatedCount = 0;
       var missingPredCount = 0;
 
@@ -106,27 +100,40 @@ class MatchController extends GetxController {
           continue;
         }
 
-        var totalPoints = 0;
-        var hasPrediction = false;
-
-        for (final entry in predictionsMap.entries) {
-          final m = matchesWithResults[entry.key];
-          if (m == null) continue;
-
-          final pred = entry.value as Map<String, dynamic>?;
-          if (pred == null) continue;
-
-          hasPrediction = true;
-          final breakdown = _calcBreakdown(pred, m);
-          totalPoints += (breakdown['total'] as int? ?? 0);
-        }
-
-        if (!hasPrediction) {
+        // Look up prediction for this specific match only.
+        final pred = predictionsMap[match.id] as Map<String, dynamic>?;
+        if (pred == null) {
           missingPredCount++;
           continue;
         }
 
-        batch.update(userDoc.reference, {'points': totalPoints});
+        final breakdown = _calcBreakdown(pred, match);
+        final pts = breakdown['total'] as int? ?? 0;
+
+        // Merge into existing match_points, preserving other matches.
+        final allMatchPoints = Map<String, dynamic>.from(
+          (data['match_points'] as Map<String, dynamic>?) ?? {},
+        );
+
+        // Always overwrite with the current live result.
+        allMatchPoints[match.id] = {
+          'points': pts,
+          'predicted': breakdown['predicted'],
+          'actual': breakdown['actual'],
+          'outcome': breakdown['outcome'],
+          'oneGoalCorrect': pts == 1,
+        };
+
+        // Recalculate total from all stored match entries.
+        final totalPoints = allMatchPoints.values
+            .whereType<Map>()
+            .map((v) => (v['points'] as int?) ?? 0)
+            .fold(0, (a, b) => a + b);
+
+        batch.update(userDoc.reference, {
+          'points': totalPoints,
+          'match_points': allMatchPoints,
+        });
         updatedCount++;
       }
 
@@ -187,15 +194,19 @@ class MatchController extends GetxController {
         'predicted': predictedStr,
         'actual': actualStr,
         'rule': 'لا نتيجة',
+        'outcome': 'wrong',
       };
     }
 
     int points;
     String rule;
 
+    String outcome;
+
     if (actualHome == predHome && actualAway == predAway) {
       points = 5;
       rule = 'نتيجة صحيحة تماماً';
+      outcome = 'exact';
     } else {
       final actualDiff = actualHome - actualAway;
       final predDiff = predHome - predAway;
@@ -203,6 +214,7 @@ class MatchController extends GetxController {
       if (actualDiff == predDiff) {
         points = 3;
         rule = 'الفارق صحيح';
+        outcome = 'correctDiff';
       } else {
         final actualWinner =
             actualHome > actualAway ? 1 : actualAway > actualHome ? -1 : 0;
@@ -212,12 +224,15 @@ class MatchController extends GetxController {
         if (actualWinner == predWinner) {
           points = 2;
           rule = 'الفائز صحيح';
+          outcome = 'correctWinner';
         } else if (actualHome == predHome || actualAway == predAway) {
           points = 1;
           rule = 'أهداف فريق واحد صحيحة';
+          outcome = 'oneGoalCorrect';
         } else {
           points = 0;
           rule = 'كل شيء خطأ';
+          outcome = 'wrong';
         }
       }
     }
@@ -227,6 +242,7 @@ class MatchController extends GetxController {
       'predicted': predictedStr,
       'actual': actualStr,
       'rule': rule,
+      'outcome': outcome,
     };
   }
 }
