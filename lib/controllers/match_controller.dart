@@ -80,11 +80,17 @@ class MatchController extends GetxController {
     }
   }
 
-  /// Recalculates every user's total points from scratch across ALL matches
-  /// that have results. Only writes the top-level `points` field — no nested map.
+  /// Recalculates every user's total points from scratch across ALL completed
+  /// matches. Triggered when any single match result is saved.
   Future<void> calculateMatchPoints(MatchModel match) async {
     calculatingMatchId.value = match.id;
     try {
+      // All matches that have a valid numeric result.
+      final completedMatches = matches.where((m) {
+        return int.tryParse(m.homeScore) != null &&
+            int.tryParse(m.awayScore) != null;
+      }).toList();
+
       final usersSnapshot = await _firestore.collection('users').get();
       final batch = _firestore.batch();
 
@@ -100,35 +106,33 @@ class MatchController extends GetxController {
           continue;
         }
 
-        // Look up prediction for this specific match only.
-        final pred = predictionsMap[match.id] as Map<String, dynamic>?;
-        if (pred == null) {
+        // Recalculate points for every completed match from scratch.
+        final allMatchPoints = <String, dynamic>{};
+        var totalPoints = 0;
+        var hasPrediction = false;
+
+        for (final m in completedMatches) {
+          final pred = predictionsMap[m.id] as Map<String, dynamic>?;
+          if (pred == null) continue;
+
+          hasPrediction = true;
+          final breakdown = _calcBreakdown(pred, m);
+          final pts = breakdown['total'] as int? ?? 0;
+          totalPoints += pts;
+
+          allMatchPoints[m.id] = {
+            'points': pts,
+            'predicted': breakdown['predicted'],
+            'actual': breakdown['actual'],
+            'outcome': breakdown['outcome'],
+            'oneGoalCorrect': pts == 1,
+          };
+        }
+
+        if (!hasPrediction) {
           missingPredCount++;
           continue;
         }
-
-        final breakdown = _calcBreakdown(pred, match);
-        final pts = breakdown['total'] as int? ?? 0;
-
-        // Merge into existing match_points, preserving other matches.
-        final allMatchPoints = Map<String, dynamic>.from(
-          (data['match_points'] as Map<String, dynamic>?) ?? {},
-        );
-
-        // Always overwrite with the current live result.
-        allMatchPoints[match.id] = {
-          'points': pts,
-          'predicted': breakdown['predicted'],
-          'actual': breakdown['actual'],
-          'outcome': breakdown['outcome'],
-          'oneGoalCorrect': pts == 1,
-        };
-
-        // Recalculate total from all stored match entries.
-        final totalPoints = allMatchPoints.values
-            .whereType<Map>()
-            .map((v) => (v['points'] as int?) ?? 0)
-            .fold(0, (a, b) => a + b);
 
         batch.update(userDoc.reference, {
           'points': totalPoints,
