@@ -7,6 +7,7 @@ import '../controllers/user_controller.dart';
 import '../models/match_model.dart';
 import 'expectations_page.dart';
 import 'leaderboard_page.dart';
+import 'stats_page.dart';
 import 'users_page.dart';
 
 class HomePage extends StatelessWidget {
@@ -22,6 +23,11 @@ class HomePage extends StatelessWidget {
         title: const Text('World Cup 2026'),
         centerTitle: true,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.bar_chart),
+            tooltip: 'إحصائيات التوقعات',
+            onPressed: () => Get.to(() => const StatsPage()),
+          ),
           IconButton(
             icon: const Icon(Icons.leaderboard),
             tooltip: 'الترتيب',
