@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:get/get.dart';
 
@@ -62,21 +64,50 @@ class MatchController extends GetxController {
     required String docId,
     required String homeScore,
     required String awayScore,
+    String homeScorers = '',
+    String awayScorers = '',
   }) async {
     try {
       await _firestore.collection('matches').doc(docId).update({
         'home_score': homeScore,
         'away_score': awayScore,
+        'home_scorers': homeScorers,
+        'away_scorers': awayScorers,
       });
       final index = matches.indexWhere((m) => m.id == docId);
       if (index != -1) {
         matches[index] = matches[index].copyWith(
           homeScore: homeScore,
           awayScore: awayScore,
+          homeScorers: homeScorers,
+          awayScorers: awayScorers,
         );
       }
     } catch (error) {
       Get.snackbar('خطأ', 'فشل حفظ النتيجة: $error');
+    }
+  }
+
+  Future<void> updateMatchTeams({
+    required String docId,
+    required String homeTeam,
+    required String awayTeam,
+  }) async {
+    try {
+      await _firestore.collection('matches').doc(docId).update({
+        'home_team_name_en': homeTeam,
+        'away_team_name_en': awayTeam,
+      });
+      final index = matches.indexWhere((m) => m.id == docId);
+      if (index != -1) {
+        matches[index] = matches[index].copyWith(
+          homeTeam: homeTeam,
+          awayTeam: awayTeam,
+        );
+      }
+      Get.snackbar('تم', 'تم حفظ أسماء الفرق');
+    } catch (error) {
+      Get.snackbar('خطأ', 'فشل حفظ أسماء الفرق: $error');
     }
   }
 
@@ -154,7 +185,7 @@ class MatchController extends GetxController {
         Get.snackbar(
           'تم',
           'تم تحديث نقاط $updatedCount مستخدم'
-          '${missingPredCount > 0 ? ' • $missingPredCount بدون توقع' : ''}',
+              '${missingPredCount > 0 ? ' • $missingPredCount بدون توقع' : ''}',
         );
       }
     } catch (error) {
@@ -220,10 +251,16 @@ class MatchController extends GetxController {
         rule = 'الفارق صحيح';
         outcome = 'correctDiff';
       } else {
-        final actualWinner =
-            actualHome > actualAway ? 1 : actualAway > actualHome ? -1 : 0;
-        final predWinner =
-            predHome > predAway ? 1 : predAway > predHome ? -1 : 0;
+        final actualWinner = actualHome > actualAway
+            ? 1
+            : actualAway > actualHome
+            ? -1
+            : 0;
+        final predWinner = predHome > predAway
+            ? 1
+            : predAway > predHome
+            ? -1
+            : 0;
 
         if (actualWinner == predWinner) {
           points = 2;
@@ -248,5 +285,62 @@ class MatchController extends GetxController {
       'rule': rule,
       'outcome': outcome,
     };
+  }
+
+  // ── collection duplicator ─────────────────────────────────────────────────
+
+  /// Copies [matches] → [matches_<suffix>] and [users] → [users_<suffix>].
+  /// Uses chunked batches to stay under Firestore's 500-op limit.
+  Future<void> duplicateCollections(String suffix) async {
+    final tag = suffix.trim();
+    if (tag.isEmpty) {
+      Get.snackbar('خطأ', 'يرجى إدخال اسم للنسخة');
+      return;
+    }
+
+    Get.snackbar(
+      'جارٍ النسخ…',
+      'يرجى الانتظار',
+      duration: const Duration(seconds: 60),
+    );
+
+    try {
+      final matchSnap = await _firestore.collection('matches').get();
+      final userSnap = await _firestore.collection('users').get();
+      final tableSnap = await _firestore.collection('tables').get();
+
+      await _copyDocs(matchSnap.docs, 'matches_$tag');
+      await _copyDocs(userSnap.docs, 'users_$tag');
+      await _copyDocs(tableSnap.docs, 'tables_$tag');
+
+      Get.closeAllSnackbars();
+      Get.snackbar(
+        'تم',
+        'تم نسخ ${matchSnap.docs.length} مباراة و ${userSnap.docs.length} مستخدم'
+            ' إلى matches_$tag و users_$tag',
+        duration: const Duration(seconds: 6),
+      );
+    } catch (e) {
+      Get.closeAllSnackbars();
+      Get.snackbar('خطأ', 'فشل النسخ: $e');
+    }
+  }
+
+  Future<void> _copyDocs(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+    String targetCollection,
+  ) async {
+    const chunkSize = 400;
+    for (var i = 0; i < docs.length; i += chunkSize) {
+      final chunk = docs.sublist(i, min(i + chunkSize, docs.length));
+      final batch = _firestore.batch();
+      for (final doc in chunk) {
+        batch.set(
+          _firestore.collection(targetCollection).doc(doc.id),
+          doc.data(),
+        );
+      }
+      await batch.commit();
+    }
   }
 }

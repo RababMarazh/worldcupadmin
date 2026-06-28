@@ -329,6 +329,8 @@ class MatchModel {
   }
 
   MatchModel copyWith({
+    String? homeTeam,
+    String? awayTeam,
     String? homeScore,
     String? awayScore,
     String? homeScorers,
@@ -340,8 +342,8 @@ class MatchModel {
   }) {
     return MatchModel(
       id: id,
-      homeTeam: homeTeam,
-      awayTeam: awayTeam,
+      homeTeam: homeTeam ?? this.homeTeam,
+      awayTeam: awayTeam ?? this.awayTeam,
       localDate: localDate,
       localTime: localTime,
       group: group,

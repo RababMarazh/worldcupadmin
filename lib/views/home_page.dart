@@ -10,6 +10,52 @@ import 'leaderboard_page.dart';
 import 'stats_page.dart';
 import 'users_page.dart';
 
+void _showDuplicateDialog(BuildContext context, MatchController controller) {
+  final suffixCtrl = TextEditingController();
+  showDialog<void>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('نسخ البيانات'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'أدخل اسمًا للنسخة. سيتم إنشاء:\n'
+            '• matches_<الاسم>\n'
+            '• users_<الاسم>',
+            style: TextStyle(fontSize: 13, color: Colors.black54),
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            controller: suffixCtrl,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'اسم النسخة',
+              hintText: 'مثال: backup_june',
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('إلغاء'),
+        ),
+        ElevatedButton.icon(
+          icon: const Icon(Icons.copy_all, size: 18),
+          label: const Text('نسخ'),
+          onPressed: () {
+            Navigator.pop(ctx);
+            controller.duplicateCollections(suffixCtrl.text);
+          },
+        ),
+      ],
+    ),
+  );
+}
+
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
 
@@ -23,6 +69,11 @@ class HomePage extends StatelessWidget {
         title: const Text('World Cup 2026'),
         centerTitle: true,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.copy_all),
+            tooltip: 'نسخ البيانات',
+            onPressed: () => _showDuplicateDialog(context, Get.find<MatchController>()),
+          ),
           IconButton(
             icon: const Icon(Icons.bar_chart),
             tooltip: 'إحصائيات التوقعات',
@@ -196,14 +247,31 @@ class _MatchCard extends StatefulWidget {
 class _MatchCardState extends State<_MatchCard> {
   late final TextEditingController _homeScoreCtrl;
   late final TextEditingController _awayScoreCtrl;
+  late final TextEditingController _homeTeamCtrl;
+  late final TextEditingController _awayTeamCtrl;
+  late List<TextEditingController> _homeGoalCtrl;
+  late List<TextEditingController> _awayGoalCtrl;
   bool _saving = false;
+  bool _savingTeams = false;
   bool _calculating = false;
+
+  bool get _isKnockout => widget.matchNumber >= 73;
+
+  static List<TextEditingController> _parseScorers(String raw) {
+    final parts = raw.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).toList();
+    if (parts.isEmpty) return [TextEditingController()];
+    return parts.map((s) => TextEditingController(text: s)).toList();
+  }
 
   @override
   void initState() {
     super.initState();
     _homeScoreCtrl = TextEditingController(text: widget.match.homeScore);
     _awayScoreCtrl = TextEditingController(text: widget.match.awayScore);
+    _homeTeamCtrl = TextEditingController(text: widget.match.homeTeam);
+    _awayTeamCtrl = TextEditingController(text: widget.match.awayTeam);
+    _homeGoalCtrl = _parseScorers(widget.match.homeScorers);
+    _awayGoalCtrl = _parseScorers(widget.match.awayScorers);
   }
 
   @override
@@ -215,14 +283,48 @@ class _MatchCardState extends State<_MatchCard> {
     if (old.match.awayScore != widget.match.awayScore) {
       _awayScoreCtrl.text = widget.match.awayScore;
     }
+    if (old.match.homeTeam != widget.match.homeTeam) {
+      _homeTeamCtrl.text = widget.match.homeTeam;
+    }
+    if (old.match.awayTeam != widget.match.awayTeam) {
+      _awayTeamCtrl.text = widget.match.awayTeam;
+    }
   }
 
   @override
   void dispose() {
     _homeScoreCtrl.dispose();
     _awayScoreCtrl.dispose();
+    _homeTeamCtrl.dispose();
+    _awayTeamCtrl.dispose();
+    for (final c in _homeGoalCtrl) { c.dispose(); }
+    for (final c in _awayGoalCtrl) { c.dispose(); }
     super.dispose();
   }
+
+  void _addHomeGoal() => setState(() => _homeGoalCtrl.add(TextEditingController()));
+  void _addAwayGoal() => setState(() => _awayGoalCtrl.add(TextEditingController()));
+
+  void _removeHomeGoal(int i) {
+    if (_homeGoalCtrl.length == 1) return;
+    setState(() {
+      _homeGoalCtrl[i].dispose();
+      _homeGoalCtrl.removeAt(i);
+    });
+  }
+
+  void _removeAwayGoal(int i) {
+    if (_awayGoalCtrl.length == 1) return;
+    setState(() {
+      _awayGoalCtrl[i].dispose();
+      _awayGoalCtrl.removeAt(i);
+    });
+  }
+
+  String get _homeScorersValue =>
+      _homeGoalCtrl.map((c) => c.text.trim()).where((s) => s.isNotEmpty).join(',');
+  String get _awayScorersValue =>
+      _awayGoalCtrl.map((c) => c.text.trim()).where((s) => s.isNotEmpty).join(',');
 
   Future<void> _save() async {
     setState(() => _saving = true);
@@ -230,8 +332,26 @@ class _MatchCardState extends State<_MatchCard> {
       docId: widget.match.id,
       homeScore: _homeScoreCtrl.text.trim(),
       awayScore: _awayScoreCtrl.text.trim(),
+      homeScorers: _homeScorersValue,
+      awayScorers: _awayScorersValue,
     );
     if (mounted) setState(() => _saving = false);
+  }
+
+  Future<void> _saveTeams() async {
+    final home = _homeTeamCtrl.text.trim();
+    final away = _awayTeamCtrl.text.trim();
+    if (home.isEmpty || away.isEmpty) {
+      Get.snackbar('تنبيه', 'يرجى إدخال اسمَي الفريقين');
+      return;
+    }
+    setState(() => _savingTeams = true);
+    await widget.controller.updateMatchTeams(
+      docId: widget.match.id,
+      homeTeam: home,
+      awayTeam: away,
+    );
+    if (mounted) setState(() => _savingTeams = false);
   }
 
   Future<void> _calculate() async {
@@ -299,6 +419,68 @@ class _MatchCardState extends State<_MatchCard> {
           ),
           const SizedBox(height: 20),
 
+          // ── knockout team names (match 73+) ──────────────────────────────
+          if (_isKnockout) ...[
+            const Divider(height: 24),
+            const Text(
+              'أسماء الفرق',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: _ResultField(
+                    controller: _homeTeamCtrl,
+                    label: 'الفريق الأول',
+                    hint: 'اسم الفريق',
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 14),
+                  child: Text(
+                    'vs',
+                    style: TextStyle(fontSize: 16, color: Colors.black38),
+                  ),
+                ),
+                Expanded(
+                  child: _ResultField(
+                    controller: _awayTeamCtrl,
+                    label: 'الفريق الثاني',
+                    hint: 'اسم الفريق',
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: _savingTeams
+                  ? const Center(
+                      child: SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    )
+                  : ElevatedButton.icon(
+                      onPressed: _saveTeams,
+                      icon: const Icon(Icons.group, size: 18),
+                      label: const Text('حفظ أسماء الفرق'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.deepOrange,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                    ),
+            ),
+            const Divider(height: 24),
+          ],
+
           // ── score inputs ─────────────────────────────────────────────────
           const Text(
             'أدخل نتيجة المباراة',
@@ -337,6 +519,132 @@ class _MatchCardState extends State<_MatchCard> {
             ],
           ),
           const SizedBox(height: 20),
+
+          // ── scorers ──────────────────────────────────────────────────────
+          const Text(
+            'أرقام الهدافين',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: Colors.black87,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // home scorers
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      match.homeTeam,
+                      style: const TextStyle(
+                          fontSize: 12, color: Colors.black54),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 6),
+                    for (int i = 0; i < _homeGoalCtrl.length; i++)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _homeGoalCtrl[i],
+                                keyboardType: TextInputType.number,
+                                textAlign: TextAlign.center,
+                                decoration: InputDecoration(
+                                  hintText: 'رقم',
+                                  border: const OutlineInputBorder(),
+                                  contentPadding:
+                                      const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 8),
+                                  isDense: true,
+                                  suffixIcon: _homeGoalCtrl.length > 1
+                                      ? GestureDetector(
+                                          onTap: () => _removeHomeGoal(i),
+                                          child: const Icon(Icons.close,
+                                              size: 16,
+                                              color: Colors.black38),
+                                        )
+                                      : null,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    TextButton.icon(
+                      onPressed: _addHomeGoal,
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('إضافة'),
+                      style: TextButton.styleFrom(
+                          foregroundColor: Colors.green,
+                          padding: EdgeInsets.zero),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 16),
+              // away scorers
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text(
+                      match.awayTeam,
+                      style: const TextStyle(
+                          fontSize: 12, color: Colors.black54),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 6),
+                    for (int i = 0; i < _awayGoalCtrl.length; i++)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _awayGoalCtrl[i],
+                                keyboardType: TextInputType.number,
+                                textAlign: TextAlign.center,
+                                decoration: InputDecoration(
+                                  hintText: 'رقم',
+                                  border: const OutlineInputBorder(),
+                                  contentPadding:
+                                      const EdgeInsets.symmetric(
+                                          horizontal: 6, vertical: 8),
+                                  isDense: true,
+                                  suffixIcon: _awayGoalCtrl.length > 1
+                                      ? GestureDetector(
+                                          onTap: () => _removeAwayGoal(i),
+                                          child: const Icon(Icons.close,
+                                              size: 16,
+                                              color: Colors.black38),
+                                        )
+                                      : null,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    TextButton.icon(
+                      onPressed: _addAwayGoal,
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('إضافة'),
+                      style: TextButton.styleFrom(
+                          foregroundColor: Colors.green,
+                          padding: EdgeInsets.zero),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
 
           // ── action buttons ───────────────────────────────────────────────
           Row(
